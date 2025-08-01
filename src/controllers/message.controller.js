@@ -36,6 +36,13 @@ const sendMessage = async (req, res, next) => {
       image: images,
     });
 
+    req.app.get("io").emit("sendMessage", message);
+    req.app.get("io").emit("lastMessageUpdate", {
+      sender: req.user._id,
+      receiver: req.params.id,
+      message: message,
+    });
+
     return res
       .status(201)
       .json(new ApiResponse(201, message, "Message sent successfully"));
@@ -48,9 +55,10 @@ const sendMessage = async (req, res, next) => {
 
 const editMessage = async (req, res, next) => {
   try {
-    const messageId = req.params.id;
+    const messageId = req.params.messageId;
     const userId = req.user._id; // authenticated user
     const { text } = req.body;
+    console.log(messageId);
 
     const message = await Message.findById(messageId);
 
@@ -121,6 +129,10 @@ const getMessages = async (req, res, next) => {
       ],
     }).sort({ createdAt: 1 });
 
+    req.app.get("io").emit("messageSeen", {
+      user1,
+      user2,
+    });
     return res
       .status(200)
       .json(new ApiResponse(200, messages, "Messages fetched successfully"));

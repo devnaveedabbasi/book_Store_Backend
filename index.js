@@ -3,8 +3,12 @@ const cors = require("cors");
 const errorHandler = require("./src/middlewares/errorHanlder.middlewares.js");
 const connectDb = require("./src/config/db.config.js");
 const path = require("path"); // ✅ IMPORT PATH
-const app = express();
 
+const handleSocket = require("./src/utils/hanldeSocket.js");
+const { Server } = require("socket.io");
+const { createServer } = require("http");
+const app = express();
+const server = createServer(app);
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
@@ -15,9 +19,29 @@ app.use(
   })
 );
 
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: false,
+  },
+});
+
+app.set("io", io);
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("user disconnected:", socket.id);
+  });
+});
+
+handleSocket(io);
+
 connectDb()
   .then(() => {
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
   })
