@@ -7,16 +7,82 @@ const handleSocket = (io) => {
   io.on("connection", (socket) => {
     console.log("🟢 User Connected:", socket.id);
 
-    // Add User
+    // Add User to online users
     socket.on("addUser", async (userId) => {
+      if (!userId) return;
+
       onlineUsers.set(userId, socket.id);
+      console.log("👤 User added to online users:", userId);
 
-      const userIds = Array.from(onlineUsers.keys());
-      const users = await User.find({ _id: { $in: userIds } }).select(
-        "fullName email _id"
-      );
+      // Emit online users list to all clients
+      const onlineUserIds = Array.from(onlineUsers.keys());
+      io.emit("getOnlineUsers", onlineUserIds);
+    });
 
-      io.emit("getOnlineUsers", users);
+    // Get chat users (users with whom current user has chatted)
+    socket.on("getChatUsers", async (currentUserId) => {
+      try {
+        if (!currentUserId) return;
+
+        // Find all messages where current user is sender or receiver
+        const messages = await Message.find({
+          $or: [{ sender: currentUserId }, { receiver: currentUserId }],
+        })
+          .sort({ createdAt: -1 })
+          .populate("sender receiver", "fullName email updatedAt");
+
+        const chatMap = new Map();
+
+        messages.forEach((msg) => {
+          const otherUser =
+            msg.sender._id.toString() === currentUserId
+              ? msg.receiver
+              : msg.sender;
+
+          const otherUserId = otherUser._id.toString();
+
+          if (!chatMap.has(otherUserId)) {
+            chatMap.set(otherUserId, {
+              userId: otherUser._id,
+              fullName: otherUser.fullName,
+              email: otherUser.email,
+              lastMessage:
+                msg.text ||
+                (msg.image && msg.image.length > 0 ? "📷 Image" : ""),
+              lastSeen: otherUser.updatedAt,
+              lastTime: msg.createdAt,
+              online: onlineUsers.has(otherUserId),
+            });
+          }
+        });
+
+        const chatUsers = Array.from(chatMap.values());
+        socket.emit("chatUsersList", chatUsers);
+      } catch (error) {
+        console.error("❌ Failed to fetch chat users:", error);
+        socket.emit("chatUsersList", []);
+      }
+    });
+
+    // Get messages between two users
+    socket.on("getMessages", async ({ currentUserId, selectedUserId }) => {
+      try {
+        if (!currentUserId || !selectedUserId) return;
+
+        const messages = await Message.find({
+          $or: [
+            { sender: currentUserId, receiver: selectedUserId },
+            { sender: selectedUserId, receiver: currentUserId },
+          ],
+        })
+          .sort({ createdAt: 1 })
+          .populate("sender receiver", "fullName email");
+
+        socket.emit("messagesList", messages);
+      } catch (error) {
+        console.error("❌ Failed to fetch messages:", error);
+        socket.emit("messagesList", []);
+      }
     });
 
     // Send Message
@@ -35,21 +101,27 @@ const handleSocket = (io) => {
           const message = await Message.create({
             sender: senderId,
             receiver: receiverId,
-            text,
+            text: text || "",
             image: imagePaths,
           });
 
+          // Populate sender and receiver details
+          await message.populate("sender receiver", "fullName email");
+
+          // Send to receiver if online
           const receiverSocketId = onlineUsers.get(receiverId);
           if (receiverSocketId) {
             io.to(receiverSocketId).emit("receiveMessage", message);
           }
 
+          // Send back to sender
           socket.emit("receiveMessage", message);
-          io.emit("lastMessageUpdate", {
-            sender: senderId,
-            receiver: receiverId,
-            message,
-          });
+
+          // Update chat users list for both users
+          socket.emit("getChatUsers", senderId);
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit("getChatUsers", receiverId);
+          }
         } catch (error) {
           console.log("❌ Socket Send Message Error:", error.message);
           socket.emit("error", { message: "Failed to send message" });
@@ -57,87 +129,86 @@ const handleSocket = (io) => {
       }
     );
 
-    // Send chat users with last message and online status
-    socket.on("getChatUsers", async (userId) => {
-      try {
-        const messages = await Message.find({
-          $or: [{ sender: userId }, { receiver: userId }],
-        })
-          .sort({ createdAt: -1 })
-          .populate("sender receiver", "fullName email updatedAt");
+    // Update Message
+    socket.on(
+      "updateMessage",
+      async ({ messageId, newText, currentUserId, selectedUserId }) => {
+        try {
+          const updatedMessage = await Message.findByIdAndUpdate(
+            messageId,
+            {
+              text: newText,
+              edited: true,
+              editedAt: new Date(),
+            },
+            { new: true }
+          ).populate("sender receiver", "fullName email");
 
-        const chatMap = new Map();
-
-        messages.forEach((msg) => {
-          const otherUser =
-            msg.sender._id.toString() === userId ? msg.receiver : msg.sender;
-
-          if (!chatMap.has(otherUser._id.toString())) {
-            chatMap.set(otherUser._id.toString(), {
-              userId: otherUser._id,
-              fullName: otherUser.fullName,
-              email: otherUser.email,
-              lastMessage: msg.text || "📷 Image",
-              lastSeen: otherUser.updatedAt,
-              lastTime: msg.createdAt,
-              isOnline: onlineUsers.has(otherUser._id.toString()),
-            });
+          if (!updatedMessage) {
+            return socket.emit("error", { message: "Message not found" });
           }
-        });
 
-        // Users sorted: online first, then offline
-        const sortedUsers = Array.from(chatMap.values()).sort((a, b) => {
-          if (a.isOnline && !b.isOnline) return -1;
-          if (!a.isOnline && b.isOnline) return 1;
-          return new Date(b.lastTime) - new Date(a.lastTime);
-        });
+          // Emit to all users in the chat
+          io.emit("messageUpdated", updatedMessage);
 
-        socket.emit("chatUsersList", sortedUsers);
-      } catch (err) {
-        console.error("Failed to get chat users", err);
+          // Update chat users list for both users
+          socket.emit("getChatUsers", currentUserId);
+          const receiverSocketId = onlineUsers.get(selectedUserId);
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit("getChatUsers", selectedUserId);
+          }
+        } catch (err) {
+          console.error("❌ Update Message Error:", err.message);
+          socket.emit("error", { message: "Failed to update message" });
+        }
       }
-    });
+    );
 
-    // 🔄 Update Message
-    socket.on("updateMessage", async ({ messageId, newText }) => {
-      try {
-        const updated = await Message.findByIdAndUpdate(
-          messageId,
-          { text: newText },
-          { new: true }
-        );
+    // Delete Message
+    socket.on(
+      "deleteMessage",
+      async ({ messageId, currentUserId, selectedUserId }) => {
+        try {
+          const deleted = await Message.findByIdAndDelete(messageId);
 
-        io.emit("messageUpdated", updated);
-      } catch (err) {
-        socket.emit("error", { message: "Failed to update message" });
+          if (!deleted) {
+            return socket.emit("error", { message: "Message not found" });
+          }
+
+          // Emit to all users in the chat
+          io.emit("messageDeleted", { messageId });
+
+          // Update chat users list for both users
+          socket.emit("getChatUsers", currentUserId);
+          const receiverSocketId = onlineUsers.get(selectedUserId);
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit("getChatUsers", selectedUserId);
+          }
+        } catch (err) {
+          console.log("❌ Delete Message Error:", err.message);
+          socket.emit("error", { message: "Failed to delete message" });
+        }
       }
-    });
-
-    // ❌ Delete Message
-    socket.on("deleteMessage", async ({ messageId }) => {
-      try {
-        const deleted = await Message.findByIdAndDelete(messageId);
-
-        if (!deleted)
-          return socket.emit("error", { message: "Message not found" });
-
-        io.emit("messageDeleted", { messageId });
-      } catch (err) {
-        console.log("❌ Delete Message Error:", err.message);
-        socket.emit("error", { message: "Failed to delete message" });
-      }
-    });
+    );
 
     // Disconnect
     socket.on("disconnect", () => {
+      let disconnectedUserId = null;
+
       for (const [userId, id] of onlineUsers.entries()) {
         if (id === socket.id) {
           onlineUsers.delete(userId);
+          disconnectedUserId = userId;
           break;
         }
       }
 
-      io.emit("getOnlineUsers", Array.from(onlineUsers.keys()));
+      if (disconnectedUserId) {
+        console.log("🔴 User disconnected:", disconnectedUserId);
+        // Emit updated online users list
+        const onlineUserIds = Array.from(onlineUsers.keys());
+        io.emit("getOnlineUsers", onlineUserIds);
+      }
     });
   });
 };

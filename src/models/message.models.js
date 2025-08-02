@@ -20,6 +20,14 @@ const messageSchema = new mongoose.Schema({
     type: [String],
     default: [],
   },
+  edited: {
+    type: Boolean,
+    default: false,
+  },
+  editedAt: {
+    type: Date,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
