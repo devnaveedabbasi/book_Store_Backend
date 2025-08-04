@@ -96,28 +96,36 @@ const handleSocket = (io) => {
             });
           }
 
-          const imagePaths = images.map((img) => `uploads/${img}`);
+          // Validate image paths (only allow .jpg, .png, .webp, etc)
+          const validImageExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+          const imagePaths = images
+            .filter((img) =>
+              validImageExtensions.some((ext) =>
+                img.toLowerCase().endsWith(ext)
+              )
+            )
+            .map((img) => `uploads/${img}`);
 
           const message = await Message.create({
             sender: senderId,
             receiver: receiverId,
             text: text || "",
-            image: imagePaths,
+            image: imagePaths, // This can be empty if only text
           });
 
-          // Populate sender and receiver details
+          // Populate sender and receiver fields
           await message.populate("sender receiver", "fullName email");
 
-          // Send to receiver if online
+          // Send message to receiver if online
           const receiverSocketId = onlineUsers.get(receiverId);
           if (receiverSocketId) {
             io.to(receiverSocketId).emit("receiveMessage", message);
           }
 
-          // Send back to sender
+          // Also send it back to sender
           socket.emit("receiveMessage", message);
 
-          // Update chat users list for both users
+          // Update chat user list for both
           socket.emit("getChatUsers", senderId);
           if (receiverSocketId) {
             io.to(receiverSocketId).emit("getChatUsers", receiverId);

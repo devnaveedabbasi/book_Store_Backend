@@ -22,5 +22,13 @@ router.get("/chat-users", auth, getChatUsers);
 router.get("/get-messages/:user2", auth, getMessages);
 router.patch("/edit-message/:messageId", auth, editMessage);
 router.delete("/delete-message/:messageId", auth, deleteMessage);
+// POST /upload-image
+router.post("/upload-images", upload.array("images"), (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: "No files uploaded" });
+  }
 
+  const filenames = req.files.map((file) => file.filename);
+  return res.status(200).json({ filenames });
+});
 module.exports = router;

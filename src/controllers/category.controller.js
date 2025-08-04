@@ -28,7 +28,7 @@ const addCategory = async (req, res) => {
     }
 
     const category = await Category.create({
-      name: name.trim().toLowerCase(),
+      name,
       icon,
     });
 
