@@ -13,6 +13,7 @@ const addBook = async (req, res) => {
       genre,
       condition,
       pages,
+      author,
       description,
       location,
       productType,
@@ -55,13 +56,14 @@ const addBook = async (req, res) => {
       slug,
       genre: Array.isArray(genre) ? genre : [genre],
       condition,
+      author,
       description,
       pages,
       image: images,
       location,
       productType,
       price: productType === "sale" ? price : 0,
-      author: user._id,
+      uploader: user._id,
       category: categoryId,
     });
 
@@ -103,7 +105,7 @@ const getBookBySlug = async (req, res) => {
 
     const book = await Book.findOne({ slug })
       .populate("category", "name icon")
-      .populate("author", "fullName email");
+      .populate("uploader", "fullName email");
 
     if (!book) {
       return res.status(404).json(new ApiError(404, "Book not found"));
@@ -165,14 +167,51 @@ const updateBook = async (req, res) => {
 
 const getAllBooks = async (req, res) => {
   try {
-    const books = await Book.find()
-      .populate("author", "fullName email")
-      .populate("category", "name icon")
-      .sort({ createdAt: -1 });
+    const books = await Book.aggregate([
+      {
+        $lookup: {
+          from: "categories", // collection name in MongoDB
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      { $unwind: "$category" },
+      {
+        $lookup: {
+          from: "users", // uploader's collection
+          localField: "uploader",
+          foreignField: "_id",
+          as: "uploader",
+        },
+      },
+      { $unwind: "$uploader" },
+      {
+        $sort: { createdAt: -1 },
+      },
+      {
+        $group: {
+          _id: "$category._id",
+          book: { $first: "$$ROOT" }, // get latest book per category
+        },
+      },
+      { $limit: 10 }, // only 10 categories
+      {
+        $replaceRoot: {
+          newRoot: "$book",
+        },
+      },
+    ]);
 
     return res
       .status(200)
-      .json(new ApiResponse(200, books, "All books fetched successfully"));
+      .json(
+        new ApiResponse(
+          200,
+          books,
+          "Books from different categories fetched successfully"
+        )
+      );
   } catch (error) {
     const statusCode = error.statusCode || 500;
     const message =
@@ -193,6 +232,8 @@ const filterBooks = async (req, res) => {
       maxPages = Number.MAX_SAFE_INTEGER,
       productType,
       condition,
+      uploaderId, // ✅ added uploader filter
+      author, // ✅ added author filter
       page = 1,
       limit = 10,
     } = req.query;
@@ -202,19 +243,12 @@ const filterBooks = async (req, res) => {
       price: { $gte: Number(minPrice), $lte: Number(maxPrice) },
     };
 
-    if (category) {
-      query.category = category;
-    }
+    if (category) query.category = category;
+    if (productType) query.productType = productType;
+    if (condition) query.condition = condition;
+    if (uploaderId) query.uploader = uploaderId; // ✅ uploader filtering
+    if (author) query.author = { $regex: author, $options: "i" }; // ✅ author filtering (partial match)
 
-    if (productType) {
-      query.productType = productType;
-    }
-
-    if (condition) {
-      query.condition = condition;
-    }
-
-    // ✅ FIXED: Correct number comparison for pages
     if (minPages || maxPages) {
       query.pages = {
         $gte: Number(minPages),
@@ -223,7 +257,7 @@ const filterBooks = async (req, res) => {
     }
 
     const books = await Book.find(query)
-      .populate("author", "name email")
+      .populate("uploader", "fullName email")
       .populate("category", "name icon")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
@@ -252,6 +286,45 @@ const filterBooks = async (req, res) => {
   }
 };
 
+const getAllAuthors = async (req, res) => {
+  try {
+    const authors = await Book.distinct("author"); // Assuming "author" is a field in your Book model
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, { authors }, "Authors fetched successfully"));
+  } catch (error) {
+    return res
+      .status(error.statusCode || 500)
+      .json(
+        new ApiError(
+          error.statusCode || 500,
+          error.message || "Error fetching authors"
+        )
+      );
+  }
+};
+const getAllUploaders = async (req, res) => {
+  try {
+    const uploaders = await Book.distinct("uploader"); // Assuming "uploader" is a field in Book schema
+
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, { uploaders }, "Uploaders fetched successfully")
+      );
+  } catch (error) {
+    return res
+      .status(error.statusCode || 500)
+      .json(
+        new ApiError(
+          error.statusCode || 500,
+          error.message || "Error fetching uploaders"
+        )
+      );
+  }
+};
+
 const getRelatedBooks = async (req, res) => {
   try {
     const { bookId } = req.params;
@@ -270,7 +343,7 @@ const getRelatedBooks = async (req, res) => {
       ],
     })
       .limit(10)
-      .populate("author", "fullName email")
+      .populate("uploader", "fullName email")
       .populate("category", "name icon");
 
     return res
@@ -296,6 +369,8 @@ module.exports = {
   getAllBooks,
   filterBooks,
   getRelatedBooks,
+  getAllAuthors,
+  getAllUploaders,
 };
 
 // const bookBannerUploadOnCloudninary = await uploadOnCloudinary(

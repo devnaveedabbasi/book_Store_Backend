@@ -8,9 +8,13 @@ const bookSchema = new Schema(
       required: [true, "Title is required"],
       trim: true,
     },
-    author: {
+    uploader: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+      required: true,
+    },
+    author: {
+      type: String,
       required: true,
     },
     genre: {
@@ -31,6 +35,7 @@ const bookSchema = new Schema(
       type: Number,
       default: 0,
     },
+
     description: String,
     pages: Number,
     category: {
