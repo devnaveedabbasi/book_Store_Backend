@@ -84,7 +84,7 @@ const getAllBooksByUser = async (req, res) => {
       throw new ApiError(401, "Unauthorized: User not logged in");
     }
 
-    const books = await Book.find({ author: userId })
+    const books = await Book.find({ uploader: userId })
       .populate("category", "name icon")
       .sort({ createdAt: -1 });
 
@@ -167,10 +167,17 @@ const updateBook = async (req, res) => {
 
 const getAllBooks = async (req, res) => {
   try {
+    const currentUserId = req.user?._id; // Assuming user is authenticated
+
     const books = await Book.aggregate([
       {
+        $match: {
+          uploader: { $ne: currentUserId }, // Exclude current user's books
+        },
+      },
+      {
         $lookup: {
-          from: "categories", // collection name in MongoDB
+          from: "categories",
           localField: "category",
           foreignField: "_id",
           as: "category",
@@ -179,7 +186,7 @@ const getAllBooks = async (req, res) => {
       { $unwind: "$category" },
       {
         $lookup: {
-          from: "users", // uploader's collection
+          from: "users",
           localField: "uploader",
           foreignField: "_id",
           as: "uploader",
@@ -187,19 +194,7 @@ const getAllBooks = async (req, res) => {
       },
       { $unwind: "$uploader" },
       {
-        $sort: { createdAt: -1 },
-      },
-      {
-        $group: {
-          _id: "$category._id",
-          book: { $first: "$$ROOT" }, // get latest book per category
-        },
-      },
-      { $limit: 10 }, // only 10 categories
-      {
-        $replaceRoot: {
-          newRoot: "$book",
-        },
+        $sort: { createdAt: -1 }, // Sort by latest
       },
     ]);
 
@@ -209,7 +204,7 @@ const getAllBooks = async (req, res) => {
         new ApiResponse(
           200,
           books,
-          "Books from different categories fetched successfully"
+          "All books fetched successfully (excluding your own)"
         )
       );
   } catch (error) {
@@ -286,45 +281,6 @@ const filterBooks = async (req, res) => {
   }
 };
 
-const getAllAuthors = async (req, res) => {
-  try {
-    const authors = await Book.distinct("author"); // Assuming "author" is a field in your Book model
-
-    return res
-      .status(200)
-      .json(new ApiResponse(200, { authors }, "Authors fetched successfully"));
-  } catch (error) {
-    return res
-      .status(error.statusCode || 500)
-      .json(
-        new ApiError(
-          error.statusCode || 500,
-          error.message || "Error fetching authors"
-        )
-      );
-  }
-};
-const getAllUploaders = async (req, res) => {
-  try {
-    const uploaders = await Book.distinct("uploader"); // Assuming "uploader" is a field in Book schema
-
-    return res
-      .status(200)
-      .json(
-        new ApiResponse(200, { uploaders }, "Uploaders fetched successfully")
-      );
-  } catch (error) {
-    return res
-      .status(error.statusCode || 500)
-      .json(
-        new ApiError(
-          error.statusCode || 500,
-          error.message || "Error fetching uploaders"
-        )
-      );
-  }
-};
-
 const getRelatedBooks = async (req, res) => {
   try {
     const { bookId } = req.params;
@@ -361,6 +317,38 @@ const getRelatedBooks = async (req, res) => {
   }
 };
 
+const deleteBookById = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { bookId } = req.params;
+
+    if (!userId) {
+      throw new ApiError(401, "Unauthorized: User not logged in");
+    }
+
+    const book = await Book.findOne({ _id: bookId });
+
+    if (!book) {
+      throw new ApiError(404, "Book not found");
+    }
+
+    if (book.uploader.toString() !== userId.toString()) {
+      throw new ApiError(403, "Forbidden: You can only delete your own book");
+    }
+
+    await Book.deleteOne({ _id: bookId });
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, null, "Book deleted successfully"));
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || "Something went wrong while deleting book",
+    });
+  }
+};
+
 module.exports = {
   addBook,
   getAllBooksByUser,
@@ -369,8 +357,7 @@ module.exports = {
   getAllBooks,
   filterBooks,
   getRelatedBooks,
-  getAllAuthors,
-  getAllUploaders,
+  deleteBookById,
 };
 
 // const bookBannerUploadOnCloudninary = await uploadOnCloudinary(

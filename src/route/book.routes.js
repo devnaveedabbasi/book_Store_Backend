@@ -7,8 +7,7 @@ const {
   getAllBooks,
   getRelatedBooks,
   getBookBySlug,
-  getAllAuthors,
-  getAllUploaders,
+  deleteBookById,
 } = require("../controllers/book.controller");
 const { auth } = require("../middlewares/auth.middleware");
 const upload = require("../middlewares/upload.middleware");
@@ -20,9 +19,8 @@ router.get("/all", getAllBooks);
 router.get("/filter", filterBooks);
 router.put("/update/:id", auth, upload.array("images", 5), updateBook);
 router.get("/my-books", auth, getAllBooksByUser);
-router.get("/my/:slug", auth, getBookBySlug);
+router.get("/my/:slug", getBookBySlug);
 router.get("/related/:bookId", getRelatedBooks);
-router.get("/all-authors", getAllAuthors);
-router.get("/all-uploaders", getAllUploaders);
+router.delete("/delete/:bookId", auth, deleteBookById);
 
 module.exports = router;

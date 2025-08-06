@@ -12,8 +12,7 @@ const createBookRequest = async (req, res) => {
       return res.status(404).json(new ApiError(404, "Book not found"));
     }
 
-    // ✅ Prevent self-request
-    if (book.author.toString() === requesterId.toString()) {
+    if (book.uploader.toString() === requesterId.toString()) {
       return res
         .status(400)
         .json(new ApiError(400, "You cannot request your own book."));
@@ -33,7 +32,7 @@ const createBookRequest = async (req, res) => {
     const bookRequest = await BookRequest.create({
       book: bookId,
       requester: requesterId,
-      owner: book.author,
+      owner: book.uploader, // ✅ Fix applied here
     });
 
     return res
